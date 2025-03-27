@@ -163,5 +163,6 @@ func (w *responseWriter) Write(data []byte) (n int, err error) {
 这里 gin 实现了 ResponseWriter interface，对原生的 response 做了一定的扩展，不过最终依然是调用 net/http 的 response.Write 完成对请求数据的最终写入。
 
 # 总结
+
 本篇文章主要介绍了 gin 是如何完成对数据的组装然后返回给客户端的。写到这里基本上 gin 的整个流程就梳理完成了。gin 提供的功能就这么多，第一篇源码分析文章我提到 gin 是个 httprouter 基本就是这个原因。
 
