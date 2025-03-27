@@ -213,3 +213,105 @@ func (srv *Server) Serve(l net.Listener) error {
     }
 }
 ```
+
+### 3. 提供回调接口 ServeHTTP
+
+```go
+// net/http/server.go:L1739-1878
+func (c *conn) serve(ctx context.Context) {
+    // ... 省略代码
+    serverHandler{c.server}.ServeHTTP(w, w.req)
+    w.cancelCtx()
+    if c.hijacked() {
+      return
+    }
+    w.finishRequest()
+    // ... 省略代码
+}
+```
+
+```go
+// net/http/server.go:L2733-2742
+func (sh serverHandler) ServeHTTP(rw ResponseWriter, req *Request) {
+    handler := sh.srv.Handler
+    if handler == nil {
+      handler = DefaultServeMux
+    }
+    if req.RequestURI == "*" && req.Method == "OPTIONS" {
+      handler = globalOptionsHandler{}
+    }
+    handler.ServeHTTP(rw, req)
+}
+```
+
+```go
+// net/http/server.go:L2352-2362
+func (mux *ServeMux) ServeHTTP(w ResponseWriter, r *Request) {
+    if r.RequestURI == "*" {
+      if r.ProtoAtLeast(1, 1) {
+        w.Header().Set("Connection", "close")
+      }
+      w.WriteHeader(StatusBadRequest)
+      return
+    }
+    h, _ := mux.Handler(r) // <--- 看这里
+    h.ServeHTTP(w, r)
+}
+```
+
+
+### 4. 回调到实际要执行的 ServeHTTP
+
+
+```go
+// net/http/server.go:L1963-1965
+func (f HandlerFunc) ServeHTTP(w ResponseWriter, r *Request) {
+   f(w, r)
+}
+```
+
+这基本是整个过程的代码了.
+
+1. ln, err := net.Listen(“tcp”, addr)做了初试化了socket, bind, listen的操作.
+2. rw, e := l.Accept()进行accept, 等待客户端进行连接
+3. go c.serve(ctx) 启动新的goroutine来处理本次请求. 同时主goroutine继续等待客户端连接, 进行高并发操作
+4. h, _ := mux.Handler(r) 获取注册的路由, 然后拿到这个路由的handler, 然后将处理结果返回给客户端
+
+从这里也能够看出来, net/http基本上提供了全套的服务.
+
+
+
+## 为什么会出现很多go框架
+
+```go
+// net/http/server.go:L2218-2238
+func (mux *ServeMux) match(path string) (h Handler, pattern string) {
+    // Check for exact match first.
+    v, ok := mux.m[path]
+    if ok {
+        return v.h, v.pattern
+    }
+
+    // Check for longest valid match.
+    var n = 0
+    for k, v := range mux.m {
+      if !pathMatch(k, path) {
+          continue
+      }
+      if h == nil || len(k) > n {
+          n = len(k)
+          h = v.h
+          pattern = v.pattern
+      }
+    }
+    return
+}
+```
+
+从这段函数可以看出来, 匹配规则过于简单, 当能匹配到路由的时候就返回其对应的handler, 当不能匹配到时就返回/. net/http的路由匹配根本就不符合 RESTful 的规则，遇到稍微复杂一点的需求时，这个简单的路由匹配规则简直就是噩梦。
+
+所以基本所有的go框架干的最主要的一件事情就是重写net/http的route。我们直接说 gin就是一个 httprouter 也不过分, 当然gin也提供了其他比较主要的功能, 后面会一一介绍。
+
+综述, net/http基本已经提供http服务的70%的功能, 那些号称贼快的go框架, 基本上都是提供一些功能, 让我们能够更好的处理客户端发来的请求. 如果你有兴趣的话，也可以基于 net/http 做一个 Go 框架出来。
+
+
